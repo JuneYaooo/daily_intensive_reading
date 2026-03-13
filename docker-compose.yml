@@ -1,0 +1,72 @@
+services:
+  # ── Entry point: reverse proxy on port 20000 ──────────────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "20000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+  # ── Backend: Flask / Gunicorn ──────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+    # env_file provides API keys and other app config.
+    # environment overrides DB/Redis hostnames so they point to docker services.
+    # All DB_* and REDIS_* here take priority over backend/.env values.
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-everyday_card}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Frontend: React (built) served via nginx ───────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+        VITE_DAILY_READING_URL: /api/daily-reading
+    restart: unless-stopped
+
+  # ── MySQL 8 ───────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-changeme}
+      MYSQL_DATABASE: ${DB_NAME:-everyday_card}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:

@@ -1,0 +1,21 @@
+{
+  "name": "daily_intensive_reading_backend",
+  "version": "1.0.0",
+  "description": "每日精读后端",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JuneYaooo/daily_intensive_reading_backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/JuneYaooo/daily_intensive_reading_backend/issues"
+  },
+  "homepage": "https://github.com/JuneYaooo/daily_intensive_reading_backend#readme"
+}
