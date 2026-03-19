@@ -17,7 +17,7 @@ ARG VITE_DAILY_READING_URL=/api/daily-reading
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_DAILY_READING_URL=$VITE_DAILY_READING_URL
 
-RUN npx --yes vite build
+RUN npm exec --yes --package vite@5.4.8 vite build
 
 # ---- Runtime stage ----
 FROM nginx:alpine
