@@ -1,7 +1,7 @@
 import api from './api';
 import { Source } from '../types';
 
-const BASE_URL = '/api/sources';
+const BASE_URL = '/api/sources/';
 
 const sourceService = {
   /**

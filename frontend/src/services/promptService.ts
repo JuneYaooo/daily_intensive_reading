@@ -1,7 +1,7 @@
 import api from './api';
 import { Prompt } from '../types';
 
-const BASE_URL = '/api/prompts';
+const BASE_URL = '/api/prompts/';
 
 const promptService = {
   /**

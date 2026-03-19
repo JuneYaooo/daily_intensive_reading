@@ -19,6 +19,7 @@ load_dotenv()
 
 # Create the Flask app
 app = Flask(__name__)
+app.url_map.strict_slashes = False
 
 # Signal handler for various termination signals
 def signal_handler(sig, frame):
