@@ -4,7 +4,8 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --include=dev
+ENV NODE_ENV=development
+RUN npm install --include=dev && npm ls vite
 
 COPY . .
 
