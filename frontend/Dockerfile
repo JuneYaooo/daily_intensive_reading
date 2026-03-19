@@ -5,7 +5,9 @@ WORKDIR /app
 
 COPY package*.json ./
 ENV NODE_ENV=development
-RUN npm install --include=dev && npm ls vite
+ENV NPM_CONFIG_PRODUCTION=false
+ENV NPM_CONFIG_OMIT=
+RUN npm ci --include=dev
 
 COPY . .
 
@@ -15,7 +17,7 @@ ARG VITE_DAILY_READING_URL=/api/daily-reading
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_DAILY_READING_URL=$VITE_DAILY_READING_URL
 
-RUN npm run build
+RUN npx --yes vite build
 
 # ---- Runtime stage ----
 FROM nginx:alpine
