@@ -1,14 +1,10 @@
 # ---- Build stage ----
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
-ENV NODE_ENV=development
-ENV NPM_CONFIG_PRODUCTION=false
-ENV NPM_CONFIG_OMIT=
-RUN npm ci --include=dev
-RUN npm install -g vite@5.4.8
+RUN npm ci --maxsockets 1 --fetch-timeout 600000
 
 COPY . .
 
@@ -18,7 +14,7 @@ ARG VITE_DAILY_READING_URL=/api/daily-reading
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_DAILY_READING_URL=$VITE_DAILY_READING_URL
 
-RUN vite build
+RUN npx vite build
 
 # ---- Runtime stage ----
 FROM nginx:alpine

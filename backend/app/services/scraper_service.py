@@ -3,14 +3,13 @@ import json
 import os
 import time
 import traceback
-import threading
 import random
+import concurrent.futures
 from datetime import datetime
 from dotenv import load_dotenv
 from ..utils.logger import BeijingLogger
 import redis
 import hashlib
-from jigsawstack import JigsawStack
 
 # Initialize logger
 logger = BeijingLogger().get_logger()
@@ -93,132 +92,107 @@ def get_random_jigsawstack_key() -> str:
     logger.info(f"Selected JigsawStack API key: {selected_key[:10]}...")
     return selected_key
 
+JIGSAWSTACK_API_URL = "https://api.jigsawstack.com/v1"
+# Per-request timeout for JigsawStack HTTP call (seconds)
+JIGSAWSTACK_REQUEST_TIMEOUT = 90
+
+
 def scrape_with_jigsawstack_single_key(url: str, api_key: str) -> dict:
     """
-    Scrape a single URL using a specific JigsawStack API key
-    
-    Args:
-        url (str): URL to scrape
-        api_key (str): Specific API key to use
-        
-    Returns:
-        dict: Scraped content or error information
+    Scrape a single URL using a specific JigsawStack API key.
+    Uses requests directly (with timeout) instead of the SDK to avoid thread leaks.
     """
     logger.info(f"使用JigsawStack API密钥 {api_key[:10]}... 爬取URL: {url}")
-    
+
+    scrape_params = {
+        "url": url,
+        "element_prompts": [
+            "main content",
+            "article text",
+            "page content",
+            "body text"
+        ],
+        "features": ["meta", "link"],
+        "advance_config": {
+            "goto_options": {
+                "timeout": 30000,
+                "wait_until": "domcontentloaded"
+            },
+            "wait_for": {
+                "mode": "timeout",
+                "value": 1000
+            }
+        }
+    }
+
+    def _do_request():
+        return requests.post(
+            f"{JIGSAWSTACK_API_URL}/ai/scrape",
+            json=scrape_params,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "x-api-key": api_key,
+            },
+            timeout=(10, JIGSAWSTACK_REQUEST_TIMEOUT),
+        )
+
     try:
-        # Initialize JigsawStack client
-        jigsaw = JigsawStack(api_key=api_key)
-        
-        # Configure scraping parameters
-        scrape_params = {
-            "url": url,
-            "element_prompts": [
-                "main content",
-                "article text",
-                "page content",
-                "body text"
-            ],
-            "features": ["meta", "link"],
-            "advance_config": {
-                "goto_options": {
-                    "timeout": 60000,
-                    "wait_until": "networkidle2"  # 等待网络基本空闲，适合动态加载的页面
-                },
-                "wait_for": {
-                    "mode": "timeout",
-                    "value": 3000
-                }
-            }
-        }
-        
-        # Make the API call
         start_time = time.time()
-        response = jigsaw.web.ai_scrape(scrape_params)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_do_request)
+            try:
+                resp = future.result(timeout=JIGSAWSTACK_REQUEST_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                error_msg = f"JigsawStack API调用超时 (>{JIGSAWSTACK_REQUEST_TIMEOUT}s)"
+                logger.error(f"{error_msg} (密钥: {api_key[:10]}...)")
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "error_details": {
+                        "type": "client_timeout",
+                        "message": error_msg,
+                        "url": url,
+                        "api_key": api_key[:10] + "..."
+                    }
+                }
         response_time = time.time() - start_time
-        
-        logger.info(f"JigsawStack API响应时间: {response_time:.2f} 秒 (密钥: {api_key[:10]}...)")
-        
-        # Check if the response is successful
-        if not response.get("success"):
-            error_msg = "JigsawStack API返回失败状态"
-            logger.error(f"{error_msg}: {response} (密钥: {api_key[:10]}...)")
+        logger.info(f"JigsawStack HTTP响应: {resp.status_code}, 耗时 {response_time:.2f}s (密钥: {api_key[:10]}...)")
+
+        if resp.status_code != 200:
+            error_msg = f"JigsawStack API返回HTTP {resp.status_code}"
+            try:
+                err_body = resp.json()
+            except Exception:
+                err_body = resp.text
+            logger.error(f"{error_msg}: {err_body} (密钥: {api_key[:10]}...)")
             return {
                 "success": False,
                 "error": error_msg,
                 "error_details": {
-                    "type": "api_response_error",
-                    "message": error_msg,
-                    "api_response": response,
-                    "api_key": api_key[:10] + "..."
-                }
-            }
-        
-        # Extract content from response
-        content_parts = []
-        
-        # Get content from context (element prompts results)
-        context = response.get("context", {})
-        for prompt, results in context.items():
-            if results:
-                content_parts.extend(results)
-        
-        # Get content from data array
-        data_items = response.get("data", [])
-        for item in data_items:
-            results = item.get("results", [])
-            for result in results:
-                text_content = result.get("text", "")
-                if text_content:
-                    content_parts.append(text_content)
-        
-        # Combine all content
-        combined_content = "\n\n".join(content_parts) if content_parts else ""
-        
-        # Get metadata if available
-        meta = response.get("meta", {})
-        title = meta.get("title", "")
-        description = meta.get("description", "")
-        
-        # Format final content with metadata
-        final_content = ""
-        if title:
-            final_content += f"# {title}\n\n"
-        if description:
-            final_content += f"**Description:** {description}\n\n"
-        
-        # final_content += combined_content
-        final_content = json.dumps(response)
-        
-        if not final_content.strip():
-            error_msg = "JigsawStack未能提取到任何内容"
-            logger.warning(f"{error_msg}: {url} (密钥: {api_key[:10]}...)")
-            return {
-                "success": False,
-                "error": error_msg,
-                "error_details": {
-                    "type": "no_content_extracted",
-                    "message": error_msg,
+                    "type": "http_error",
+                    "status_code": resp.status_code,
+                    "body": err_body,
                     "url": url,
-                    "api_response": response,
                     "api_key": api_key[:10] + "..."
                 }
             }
-        
-        # Cache the content
-        cache_content(url, final_content)
-        
-        logger.info(f"JigsawStack成功爬取内容，长度: {len(final_content)} 字符 (密钥: {api_key[:10]}...)")
-        
+
+        response = resp.json()
+
+    except requests.exceptions.Timeout:
+        error_msg = f"JigsawStack API调用超时 (>{JIGSAWSTACK_REQUEST_TIMEOUT}s)"
+        logger.error(f"{error_msg} (密钥: {api_key[:10]}...)")
         return {
-            "success": True,
-            "url": url,
-            "content": final_content,
-            "metadata": meta,
-            "provider": "jigsawstack",
-            "api_key": api_key[:10] + "..."
+            "success": False,
+            "error": error_msg,
+            "error_details": {
+                "type": "client_timeout",
+                "message": error_msg,
+                "url": url,
+                "api_key": api_key[:10] + "..."
+            }
         }
-        
     except Exception as e:
         error_msg = f"JigsawStack爬取异常: {str(e)}"
         logger.error(f"{error_msg} (密钥: {api_key[:10]}...)", exc_info=True)
@@ -233,6 +207,79 @@ def scrape_with_jigsawstack_single_key(url: str, api_key: str) -> dict:
                 "api_key": api_key[:10] + "..."
             }
         }
+
+    # Check if the response is successful
+    if not response.get("success"):
+        error_msg = "JigsawStack API返回失败状态"
+        logger.error(f"{error_msg}: {response} (密钥: {api_key[:10]}...)")
+        return {
+            "success": False,
+            "error": error_msg,
+            "error_details": {
+                "type": "api_response_error",
+                "message": error_msg,
+                "api_response": response,
+                "api_key": api_key[:10] + "..."
+            }
+        }
+
+    # Build readable content: links first, then text
+    links = response.get("link", [])
+    link_lines = []
+    seen_hrefs = set()
+    for l in links:
+        href = l.get("href", "")
+        text = (l.get("text") or "").strip()
+        if href and href not in seen_hrefs:
+            seen_hrefs.add(href)
+            link_lines.append(f"- [{text}]({href})" if text else f"- {href}")
+
+    context = response.get("context", {})
+    text_parts = []
+    for prompt, results in context.items():
+        if results:
+            text_parts.extend([r for r in results if isinstance(r, str)])
+
+    meta = response.get("meta", {})
+    title = meta.get("title", "")
+    parts = []
+    if title:
+        parts.append(f"# {title}")
+    if link_lines:
+        parts.append("## Links\n" + "\n".join(link_lines))
+    if text_parts:
+        parts.append("## Content\n" + "\n\n".join(text_parts))
+    final_content = "\n\n".join(parts)
+
+    if not final_content.strip():
+        error_msg = "JigsawStack未能提取到任何内容"
+        logger.warning(f"{error_msg}: {url} (密钥: {api_key[:10]}...)")
+        return {
+            "success": False,
+            "error": error_msg,
+            "error_details": {
+                "type": "no_content_extracted",
+                "message": error_msg,
+                "url": url,
+                "api_response": response,
+                "api_key": api_key[:10] + "..."
+            }
+        }
+
+    # Cache the content
+    cache_content(url, final_content)
+
+    meta = response.get("meta", {})
+    logger.info(f"JigsawStack成功爬取内容，长度: {len(final_content)} 字符 (密钥: {api_key[:10]}...)")
+
+    return {
+        "success": True,
+        "url": url,
+        "content": final_content,
+        "metadata": meta,
+        "provider": "jigsawstack",
+        "api_key": api_key[:10] + "..."
+    }
 
 def scrape_with_jigsawstack(url: str) -> dict:
     """
@@ -261,11 +308,19 @@ def scrape_with_jigsawstack(url: str) -> dict:
     # 创建API密钥列表的副本，用于轮换
     available_keys = JIGSAWSTACK_KEYS_LIST.copy()
     random.shuffle(available_keys)  # 随机打乱顺序
-    
+
     errors = []
-    
+    jigsawstack_start = time.time()
+    JIGSAWSTACK_TOTAL_TIMEOUT = 600  # 整个JigsawStack轮换阶段最多600s
+
     for i, api_key in enumerate(available_keys):
-        logger.info(f"尝试第 {i+1}/{len(available_keys)} 个API密钥: {api_key[:10]}...")
+        # 检查总超时
+        elapsed = time.time() - jigsawstack_start
+        if elapsed >= JIGSAWSTACK_TOTAL_TIMEOUT:
+            logger.warning(f"JigsawStack总超时 ({JIGSAWSTACK_TOTAL_TIMEOUT}s)，已尝试 {i}/{len(available_keys)} 个密钥，停止轮换")
+            break
+
+        logger.info(f"尝试第 {i+1}/{len(available_keys)} 个API密钥: {api_key[:10]}... (已用时 {elapsed:.0f}s)")
         
         result = scrape_with_jigsawstack_single_key(url, api_key)
         
@@ -456,34 +511,20 @@ def scrape_single_url(url: str, use_cache: bool = True) -> dict:
             "error": "API keys not configured",
             "details": {"message": "JigsawStack_APIKEYs environment variable not set"}
         })
-    
-    # Fallback to Firecrawl
-    logger.info("回退到Firecrawl")
-    firecrawl_result = scrape_with_firecrawl(url)
-    
-    if firecrawl_result.get("success"):
-        return {
-            "success": True,
-            "results": [firecrawl_result]
-        }
-    else:
-        logger.error(f"Firecrawl爬取也失败: {firecrawl_result.get('error')}")
-        errors.append({
-            "provider": "firecrawl", 
-            "error": firecrawl_result.get("error"),
-            "details": firecrawl_result.get("error_details")
-        })
-    
-    # Both providers failed
+
+    # Firecrawl 暂时禁用
+    logger.warning("Firecrawl渠道已禁用，跳过")
+
+    # All providers failed
     error_msg = f"所有爬虫提供商都失败了: {url}"
     logger.error(error_msg)
-    
+
     return {
         "success": False,
         "error": error_msg,
         "error_details": {
             "type": "all_providers_failed",
-            "message": "Both JigsawStack and Firecrawl failed",
+            "message": "JigsawStack failed, Firecrawl disabled",
             "url": url,
             "provider_errors": errors
         },

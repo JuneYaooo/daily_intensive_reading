@@ -18,6 +18,13 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      # Override to use Docker internal MySQL for testing
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: changeme
+      DB_NAME: everyday_card
+      # Override Redis to use Docker internal service
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB: 0
@@ -44,7 +51,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-changeme}
       MYSQL_DATABASE: ${DB_NAME:-everyday_card}
     volumes:
-      - mysql_data:/var/lib/mysql
+      - /data/daily_intensive_reading/mysql:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -56,9 +63,5 @@ services:
   redis:
     image: redis:7-alpine
     volumes:
-      - redis_data:/data
+      - /data/daily_intensive_reading/redis:/data
     restart: unless-stopped
-
-volumes:
-  mysql_data:
-  redis_data:

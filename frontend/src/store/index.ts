@@ -25,6 +25,7 @@ interface AppState {
   customFilterPrompt: string;
   customSummaryPrompt: string;
   isGenerating: boolean;
+  generatingStatus: string;
   showPromptDialog: boolean;
   isLoadingSources: boolean;
   filteredUrls: FilteredUrl[];
@@ -69,6 +70,7 @@ export const useAppStore = create<AppState>()(
         customFilterPrompt: "",
         customSummaryPrompt: "",
         isGenerating: false,
+        generatingStatus: '',
         showPromptDialog: false,
         isLoadingSources: false,
         filteredUrls: [],
@@ -217,7 +219,7 @@ export const useAppStore = create<AppState>()(
         
         generateBriefs: async () => {
           const state = get();
-          set({ isGenerating: true });
+          set({ isGenerating: true, generatingStatus: '正在爬取源页面...' });
           
           try {
             const selectedSources = state.sources.filter(source => 
@@ -239,59 +241,42 @@ export const useAppStore = create<AppState>()(
             
             if (sourceUrls.length === 0) {
               console.error('没有有效的来源URL');
-              set({ isGenerating: false });
+              set({ isGenerating: false, generatingStatus: '' });
               return;
             }
-            
+
             // 生成每日阅读内容
+            set({ generatingStatus: '正在爬取源页面内容...' });
             const dailyReadingResponse = await dailyReadingService.generateDailyReading(
               sourceUrls,
               filterPrompt,
               summaryPrompt
             );
-            
-            // 调试日志: 记录API响应结构
-            console.log('API响应结构:', {
-              success: dailyReadingResponse.success,
-              timestamp: dailyReadingResponse.timestamp,
-              filtered_urls_count: dailyReadingResponse.filtered_urls?.length || 0,
-              summary_cards_count: dailyReadingResponse.summary_cards?.length || 0
-            });
-            
-            console.log('第一个过滤URL样例:', dailyReadingResponse.filtered_urls?.[0]);
-            console.log('第一个摘要卡片样例:', dailyReadingResponse.summary_cards?.[0]);
-            
+
             // 检查响应结构是否按预期
             if (!dailyReadingResponse.filtered_urls || !Array.isArray(dailyReadingResponse.filtered_urls)) {
               console.error('API响应中filtered_urls结构不正确:', dailyReadingResponse.filtered_urls);
-              set({ isGenerating: false });
+              set({ isGenerating: false, generatingStatus: '' });
               return;
             }
-            
+
             if (!dailyReadingResponse.summary_cards || !Array.isArray(dailyReadingResponse.summary_cards)) {
               console.error('API响应中summary_cards结构不正确:', dailyReadingResponse.summary_cards);
-              set({ isGenerating: false });
+              set({ isGenerating: false, generatingStatus: '' });
               return;
             }
-            
+
             // 存储过滤的URLs和总结卡片
             set({
+              generatingStatus: '正在整理结果...',
               filteredUrls: dailyReadingResponse.filtered_urls,
               summaryCards: dailyReadingResponse.summary_cards
             });
-            
+
             // Create Brief objects from the summary cards
             try {
               const cardsAsBriefs = dailyReadingResponse.summary_cards.map(card => {
-                console.log('处理摘要卡片:', card);
-                
-                if (!card.title || !card.conclusion) {
-                  console.warn('摘要卡片缺少必要字段:', card);
-                }
-                
-                // Add source URL to the content when it exists
                 let content = card.conclusion || '';
-                
                 return {
                   id: `brief-card-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
                   sourceId: 'generated',
@@ -302,21 +287,13 @@ export const useAppStore = create<AppState>()(
                   isFavorite: false
                 };
               });
-              
+
               // Create Brief objects for the filtered URLs that don't have cards
               const urlsWithoutCards = dailyReadingResponse.filtered_urls.filter(
                 url => !dailyReadingResponse.summary_cards.some(card => card.source_url === url.url)
               );
-              
-              console.log('未生成摘要卡片的URL数量:', urlsWithoutCards.length);
-              
+
               const urlsAsBriefs = urlsWithoutCards.map(url => {
-                console.log('处理过滤URL:', url);
-                
-                if (!url.url) {
-                  console.warn('过滤URL缺少必要字段:', url);
-                }
-                
                 return {
                   id: `brief-url-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
                   sourceId: 'url-only',
@@ -327,25 +304,23 @@ export const useAppStore = create<AppState>()(
                   isFavorite: false
                 };
               });
-              
+
               const allGeneratedBriefs = [...cardsAsBriefs, ...urlsAsBriefs];
-              console.log('生成的简报总数:', allGeneratedBriefs.length);
-              
+
               // Update store with new briefs after everything is processed
-              set({ 
+              set({
                 currentBriefs: allGeneratedBriefs,
                 briefs: [...get().briefs, ...allGeneratedBriefs],
-                isGenerating: false
+                isGenerating: false,
+                generatingStatus: ''
               });
-              
-              console.log('状态更新完成. 当前简报数量:', allGeneratedBriefs.length);
             } catch (processError) {
               console.error('处理API响应数据时出错:', processError);
-              set({ isGenerating: false });
+              set({ isGenerating: false, generatingStatus: '' });
             }
           } catch (error) {
             console.error("Error generating briefs:", error);
-            set({ isGenerating: false });
+            set({ isGenerating: false, generatingStatus: '' });
           }
         },
         

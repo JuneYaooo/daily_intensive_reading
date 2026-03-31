@@ -21,6 +21,7 @@ const CurationPage: React.FC = () => {
     currentBriefs,
     briefs,
     isGenerating,
+    generatingStatus,
     selectBrief,
     fetchSources
   } = useAppStore();
@@ -123,7 +124,8 @@ const CurationPage: React.FC = () => {
               <div className="flex flex-col items-center justify-center">
                 <Loader className="w-8 h-8 text-[#0A84FF] animate-spin mb-4" />
                 <p className="text-gray-600">正在分析源内容并生成简报...</p>
-                <p className="text-sm text-gray-400 mt-2">这可能需要一点时间，请耐心等待</p>
+                <p className="text-sm text-[#0A84FF] mt-2 font-medium">{generatingStatus}</p>
+                <p className="text-xs text-gray-400 mt-1">这可能需要几分钟，请耐心等待</p>
               </div>
             </div>
           ) : currentBriefs.length > 0 ? (
