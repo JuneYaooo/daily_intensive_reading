@@ -1,5 +1,8 @@
 from flask import Blueprint, jsonify, request
-from ..services.scraper_service import batch_scrape_urls, scrape_single_url, get_cached_content
+from ..services.scraper_service import (
+    batch_scrape_urls, scrape_single_url, get_cached_content,
+    get_jigsawstack_quota_status, get_round_summary,
+)
 from ..services.deepseek_service import filter_content_urls, summarize_content, generate_poster_content
 from ..utils.logger import BeijingLogger
 import json
@@ -9,9 +12,44 @@ from datetime import datetime
 
 def get_daily_reading_blueprint():
     daily_reading_bp = Blueprint('daily_reading', __name__)
-    
+
     # 初始化日志记录器
     logger = BeijingLogger().get_logger()
+
+    def _extract_override_params(data):
+        """Extract optional API override parameters from request data."""
+        data = data or {}
+        override_keys = None
+        jigsawstack_keys_str = str(data.get('jigsawstack_keys', '')).strip()
+        if jigsawstack_keys_str:
+            override_keys = [k.strip() for k in jigsawstack_keys_str.split(',') if k.strip()]
+
+        model_overrides = {}
+        for key in ('model_base_url', 'model_name', 'model_api_key'):
+            val = str(data.get(key, '')).strip()
+            if val:
+                model_overrides[key] = val
+
+        return override_keys, model_overrides
+
+    def _normalize_filtered_urls(filtered_urls):
+        """Normalize model output into a list of URL dictionaries."""
+        if isinstance(filtered_urls, dict):
+            for key in ('urls', 'results', 'items', 'data'):
+                if isinstance(filtered_urls.get(key), list):
+                    filtered_urls = filtered_urls[key]
+                    break
+
+        if not isinstance(filtered_urls, list):
+            return []
+
+        normalized = []
+        for item in filtered_urls:
+            if isinstance(item, dict):
+                normalized.append(item)
+            elif isinstance(item, str):
+                normalized.append({'url': item})
+        return normalized
 
     @daily_reading_bp.route('/generate', methods=['POST'])
     def generate_daily_reading():
@@ -30,23 +68,35 @@ def get_daily_reading_blueprint():
             'summary_cards': [],
             'errors': []  # New field to collect all errors
         }
-        
+
         try:
             # Get request data (source URLs and optional prompts)
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             source_urls = data.get('source_urls', [
                 "https://github.com/dair-ai/ML-Papers-of-the-Week"
             ])
+            if isinstance(source_urls, str):
+                source_urls = [source_urls]
+            elif not isinstance(source_urls, list):
+                response['errors'].append({
+                    'phase': 'input_validation',
+                    'message': "source_urls must be a list of URLs"
+                })
+                return jsonify(response), 400
             filter_prompt = data.get('filter_prompt')
             summary_prompt = data.get('summary_prompt')
-            num_results = data.get('num_results', 10)
-            
+            try:
+                num_results = max(1, int(data.get('num_results', 10)))
+            except (TypeError, ValueError):
+                num_results = 10
+            override_keys, model_overrides = _extract_override_params(data)
+
             logger.info(f"生成日报，源URL数量: {len(source_urls)}, 请求结果数: {num_results}")
-            
+
             # Step 1: Batch crawl initial source URLs
             logger.info("批量爬取源URL")
-            initial_crawl_result = batch_scrape_urls(source_urls)
-            
+            initial_crawl_result = batch_scrape_urls(source_urls, override_keys=override_keys)
+
             if not initial_crawl_result.get('success'):
                 error_msg = f"Initial crawl failed: {initial_crawl_result.get('error')}"
                 logger.error(error_msg)
@@ -56,11 +106,11 @@ def get_daily_reading_blueprint():
                     'details': initial_crawl_result.get('error')
                 })
                 # Continue execution with partial data, if any
-            
+
             # Process crawl results even if some failed
             combined_content = ""
             successful_urls = []
-            
+
             for result in initial_crawl_result.get('results', []):
                 if result.get('success') and result.get('content'):
                     combined_content += f"\nSource URL: {result.get('url')}\n"
@@ -75,7 +125,7 @@ def get_daily_reading_blueprint():
                         'message': error_msg,
                         'details': result.get('error', 'Unknown error')
                     })
-            
+
             if not combined_content:
                 error_msg = "Failed to crawl any content from source URLs"
                 logger.error(error_msg)
@@ -84,11 +134,13 @@ def get_daily_reading_blueprint():
                     'message': error_msg
                 })
                 return jsonify(response), 500
-            
+
             # Step 2: Filter and rank content URLs
             logger.info("过滤和排序内容URL")
-            filtered_urls = filter_content_urls(combined_content, filter_prompt, num_results)
-            
+            filtered_urls = _normalize_filtered_urls(
+                filter_content_urls(combined_content, filter_prompt, num_results, **model_overrides)
+            )
+
             if not filtered_urls or len(filtered_urls) == 0:
                 error_msg = "Failed to extract any URLs from the crawled content"
                 logger.error(error_msg)
@@ -97,21 +149,21 @@ def get_daily_reading_blueprint():
                     'message': error_msg
                 })
                 return jsonify(response), 500
-            
+
             logger.info(f"提取到 {len(filtered_urls)} 个内容URL")
             response['filtered_urls'] = filtered_urls
-            
+
             # Step 3 & 4: Crawl content URLs and generate summary cards
             content_crawl_results = []
             summary_cards = []
             successful_count = 0
-            max_successful = min(2, len(filtered_urls))  # Limit to 2 successful cards or fewer if less URLs
-            
+            max_successful = min(5, num_results, len(filtered_urls))
+
             for item in filtered_urls:
                 # Stop if we already have enough successful results
                 if successful_count >= max_successful:
                     break
-                    
+
                 url = item.get('url')
                 if not url:
                     response['errors'].append({
@@ -120,22 +172,27 @@ def get_daily_reading_blueprint():
                         'item': item
                     })
                     continue
-                    
+
                 logger.info(f"尝试爬取URL: {url}")
-                result = scrape_single_url(url)
-                
+                result = scrape_single_url(url, override_keys=override_keys)
+
                 if result.get('success') and len(result.get('results', [])) > 0:
                     content_item = result.get('results')[0]
-                    
+
                     if content_item.get('success') and content_item.get('content'):
                         logger.info(f"成功爬取内容: {url}，正在生成摘要卡片...")
-                        
+
                         # Try to generate summary card
                         try:
-                            card_data = summarize_content(content_item.get('content'), summary_prompt)
-                            
-                            # Summarize_content now always returns a dictionary
-                            # Check if it has an error flag
+                            card_data = summarize_content(content_item.get('content'), summary_prompt, **model_overrides)
+                            if not isinstance(card_data, dict):
+                                response['errors'].append({
+                                    'phase': 'summary_generation',
+                                    'url': url,
+                                    'message': "Summary generation returned invalid data"
+                                })
+                                continue
+
                             if card_data.get('error'):
                                 logger.warning(f"摘要生成返回错误: {url} - {card_data.get('conclusion')}")
                                 response['errors'].append({
@@ -145,7 +202,7 @@ def get_daily_reading_blueprint():
                                     'details': card_data.get('error_details', {})
                                 })
                                 # Still include the card with error information
-                            
+
                             # Add source URL to the card
                             card_data['source_url'] = content_item.get('url') or url
                             summary_cards.append(card_data)
@@ -179,28 +236,28 @@ def get_daily_reading_blueprint():
                         'message': error_msg,
                         'details': result.get('error', 'Unknown error')
                     })
-            
+
             # Update response with summary cards
             response['summary_cards'] = summary_cards
-            
+
             # Set success based on whether we have any summary cards
             response['success'] = len(summary_cards) > 0
-            
+
             # Filter out URLs from filtered_urls that are already in summary_cards
             summary_card_urls = [card.get('source_url') for card in summary_cards]
             response['filtered_urls'] = [url_item for url_item in filtered_urls if url_item.get('url') not in summary_card_urls]
-            
+
             # Save the results to output directory (optional)
             try:
                 output_dir = os.path.join(os.getcwd(), "output", "daily_reading")
                 os.makedirs(output_dir, exist_ok=True)
-                
+
                 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
                 output_file = os.path.join(output_dir, f"{timestamp}_daily_reading.json")
-                
+
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(response, f, ensure_ascii=False, indent=2)
-                
+
                 logger.info(f"结果已保存到: {output_file}")
             except Exception as e:
                 error_msg = f"保存结果到文件失败: {str(e)}"
@@ -210,13 +267,18 @@ def get_daily_reading_blueprint():
                     'message': error_msg,
                     'traceback': traceback.format_exc()
                 })
-            
+
             logger.info(f"日报生成{' 成功' if response['success'] else ' 部分成功'}, 获取到 {len(summary_cards)} 张摘要卡片, 错误数: {len(response['errors'])}")
-            
+
             # Determine status code based on overall success
-            status_code = 200 if response['success'] else 500 if len(summary_cards) == 0 else 206  # Partial content
+            if summary_cards and response['errors']:
+                status_code = 206
+            elif summary_cards:
+                status_code = 200
+            else:
+                status_code = 500
             return jsonify(response), status_code
-        
+
         except Exception as e:
             error_msg = f"Failed to generate daily reading: {str(e)}"
             logger.error(error_msg, exc_info=True)
@@ -235,32 +297,32 @@ def get_daily_reading_blueprint():
         logger.info("调用 GET /daily_reading/history 路由")
         try:
             output_dir = os.path.join(os.getcwd(), "output", "daily_reading")
-            
+
             if not os.path.exists(output_dir):
                 logger.info("历史记录目录不存在")
                 return jsonify({
                     'success': True,
                     'history': []
                 })
-            
+
             # Get list of reading files
             reading_files = [f for f in os.listdir(output_dir) if f.endswith('_daily_reading.json')]
             reading_files.sort(reverse=True)  # Sort by newest first
-            
+
             logger.info(f"找到 {len(reading_files)} 条历史记录")
-            
+
             history = []
             errors = []
-            
+
             for file_name in reading_files:
                 try:
                     file_path = os.path.join(output_dir, file_name)
                     with open(file_path, 'r', encoding='utf-8') as f:
                         reading_data = json.load(f)
-                    
+
                     # Extract timestamp from filename
                     date_str = file_name.split('_daily_reading.json')[0]
-                    
+
                     # Create summary
                     summary = {
                         'timestamp': reading_data.get('timestamp'),
@@ -277,13 +339,13 @@ def get_daily_reading_blueprint():
                         'filename': file_name,
                         'message': error_msg
                     })
-            
+
             return jsonify({
                 'success': True,
                 'history': history,
                 'errors': errors
             })
-        
+
         except Exception as e:
             error_msg = f"Failed to get reading history: {str(e)}"
             logger.error(error_msg, exc_info=True)
@@ -302,20 +364,20 @@ def get_daily_reading_blueprint():
         try:
             output_dir = os.path.join(os.getcwd(), "output", "daily_reading")
             file_path = os.path.join(output_dir, filename)
-            
+
             if not os.path.exists(file_path):
                 logger.warning(f"历史记录文件不存在: {filename}")
                 return jsonify({
                     'success': False,
                     'error': f"Reading file not found: {filename}"
                 }), 404
-            
+
             with open(file_path, 'r', encoding='utf-8') as f:
                 reading_data = json.load(f)
-            
+
             logger.info(f"成功获取历史记录详情: {filename}")
             return jsonify(reading_data)
-        
+
         except Exception as e:
             error_msg = f"Failed to get reading detail: {str(e)}"
             logger.error(error_msg, exc_info=True)
@@ -324,7 +386,30 @@ def get_daily_reading_blueprint():
                 'error': error_msg,
                 'traceback': traceback.format_exc()
             }), 500
-            
+
+    @daily_reading_bp.route('/quota-status', methods=['GET'])
+    def get_quota_status():
+        """
+        Get current JigsawStack quota / usage status.
+        Includes key usage counts, rate limit snapshots, and round summaries.
+        """
+        logger.info("调用 GET /daily_reading/quota-status 路由")
+        try:
+            status = get_jigsawstack_quota_status()
+            return jsonify({
+                'success': True,
+                'data': status,
+                'timestamp': datetime.now().isoformat(),
+            })
+        except Exception as e:
+            error_msg = f"Failed to get quota status: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': error_msg,
+                'traceback': traceback.format_exc()
+            }), 500
+
     @daily_reading_bp.route('/generate-one-card', methods=['POST'])
     def generate_one_card():
         """
@@ -335,11 +420,11 @@ def get_daily_reading_blueprint():
             'success': False,
             'errors': []
         }
-        
+
         try:
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             url = data.get('url')
-            
+
             if not url:
                 error_msg = "URL is required"
                 logger.warning(error_msg)
@@ -348,14 +433,15 @@ def get_daily_reading_blueprint():
                     'message': error_msg
                 })
                 return jsonify(response), 400
-                
+
             summary_prompt = data.get('summary_prompt')
-            
+            override_keys, model_overrides = _extract_override_params(data)
+
             logger.info(f"尝试从URL生成卡片: {url}")
-            
+
             # Scrape the URL
-            result = scrape_single_url(url)
-            
+            result = scrape_single_url(url, override_keys=override_keys)
+
             if not result.get('success') or len(result.get('results', [])) == 0:
                 error_msg = f"Failed to scrape URL: {url}"
                 logger.error(error_msg)
@@ -366,9 +452,9 @@ def get_daily_reading_blueprint():
                     'details': result.get('error', 'Unknown error')
                 })
                 return jsonify(response), 500
-                
+
             content_item = result.get('results')[0]
-            
+
             if not content_item.get('success') or not content_item.get('content'):
                 error_msg = "No valid content found in the scraped page"
                 logger.error(error_msg)
@@ -379,14 +465,19 @@ def get_daily_reading_blueprint():
                     'details': content_item.get('error', 'No content available')
                 })
                 return jsonify(response), 500
-                
+
             # Generate summary card
             logger.info("生成摘要卡片")
             try:
-                card_data = summarize_content(content_item.get('content'), summary_prompt)
-                
-                # Summarize_content now always returns a dictionary
-                # Check if it has error information
+                card_data = summarize_content(content_item.get('content'), summary_prompt, **model_overrides)
+                if not isinstance(card_data, dict):
+                    response['errors'].append({
+                        'phase': 'summary_generation',
+                        'url': url,
+                        'message': "Summary generation returned invalid data"
+                    })
+                    return jsonify(response), 500
+
                 if card_data.get('error'):
                     logger.warning(f"摘要生成返回错误: {url} - {card_data.get('conclusion')}")
                     response['errors'].append({
@@ -395,32 +486,32 @@ def get_daily_reading_blueprint():
                         'message': "Summary generation returned an error",
                         'details': card_data.get('error_details', {})
                     })
-                    
+
                     # We'll still return this with the error card
-                    response['success'] = False  
+                    response['success'] = False
                     card_data['source_url'] = content_item.get('url') or url
                     response['card'] = card_data
                     return jsonify(response), 206  # Partial content
-                
+
                 # Add source URL to the card
                 card_data['source_url'] = content_item.get('url') or url
-                
+
                 logger.info(f"成功生成卡片: {card_data.get('title', '无标题')}")
                 response['success'] = True
                 response['card'] = card_data
                 return jsonify(response)
-                
+
             except Exception as e:
                 error_msg = f"Exception during summary generation: {str(e)}"
                 logger.error(error_msg, exc_info=True)
                 response['errors'].append({
                     'phase': 'summary_generation_exception',
-                    'url': url, 
+                    'url': url,
                     'message': error_msg,
                     'traceback': traceback.format_exc()
                 })
                 return jsonify(response), 500
-            
+
         except Exception as e:
             error_msg = f"Failed to generate card: {str(e)}"
             logger.error(error_msg, exc_info=True)
@@ -441,13 +532,14 @@ def get_daily_reading_blueprint():
             'success': False,
             'errors': []
         }
-        
+
         try:
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             url = data.get('url')
             title = data.get('title')
             subtitle = data.get('subtitle')
-            
+            override_keys, model_overrides = _extract_override_params(data)
+
             if not url:
                 error_msg = "URL is required"
                 logger.warning(error_msg)
@@ -456,9 +548,9 @@ def get_daily_reading_blueprint():
                     'message': error_msg
                 })
                 return jsonify(response), 400
-            
+
             logger.info(f"生成论文海报，URL: {url}")
-            
+
             # Get original content from Redis cache
             original_content = get_cached_content(url)
 
@@ -466,7 +558,7 @@ def get_daily_reading_blueprint():
                 logger.warning(f"No cached content found for URL: {url}. Attempting to scrape...")
 
                 # Attempt to scrape the URL
-                scrape_result = scrape_single_url(url, use_cache=False)
+                scrape_result = scrape_single_url(url, use_cache=False, override_keys=override_keys)
 
                 if not scrape_result.get('success') or not scrape_result.get('results'):
                     error_msg = f"Failed to scrape URL: {url}. {scrape_result.get('error', 'Unknown error')}"
@@ -519,10 +611,10 @@ def get_daily_reading_blueprint():
                 'key_points': [],
                 'quotes': []
             }
-            
+
             # Generate poster content using original content
-            poster_data = generate_poster_content(summary_card, title, subtitle)
-            
+            poster_data = generate_poster_content(summary_card, title, subtitle, **model_overrides)
+
             if not poster_data.get('success'):
                 error_msg = f"Failed to generate poster content: {poster_data.get('error', 'Unknown error')}"
                 logger.error(error_msg)
@@ -532,28 +624,28 @@ def get_daily_reading_blueprint():
                     'details': poster_data
                 })
                 return jsonify(response), 500
-            
+
             logger.info(f"成功生成论文海报: {poster_data.get('poster_content', {}).get('title', '无标题')}")
             response['success'] = True
             response['poster'] = poster_data
-            
+
             # Optional: Save poster data to file
             try:
                 output_dir = os.path.join(os.getcwd(), "output", "posters")
                 os.makedirs(output_dir, exist_ok=True)
-                
+
                 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
                 paper_title = poster_data.get('poster_content', {}).get('title', 'unknown_paper')[:50]
                 # Clean filename
                 import re
                 clean_title = re.sub(r'[^\w\s-]', '', paper_title).strip()
                 clean_title = re.sub(r'[-\s]+', '-', clean_title)
-                
+
                 output_file = os.path.join(output_dir, f"{timestamp}_{clean_title}_poster.json")
-                
+
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(poster_data, f, ensure_ascii=False, indent=2)
-                
+
                 logger.info(f"论文海报数据已保存到: {output_file}")
             except Exception as e:
                 error_msg = f"保存海报数据到文件失败: {str(e)}"
@@ -563,9 +655,9 @@ def get_daily_reading_blueprint():
                     'message': error_msg,
                     'traceback': traceback.format_exc()
                 })
-            
+
             return jsonify(response)
-            
+
         except Exception as e:
             error_msg = f"Failed to generate poster: {str(e)}"
             logger.error(error_msg, exc_info=True)
@@ -575,5 +667,5 @@ def get_daily_reading_blueprint():
                 'traceback': traceback.format_exc()
             })
             return jsonify(response), 500
-    
-    return daily_reading_bp 
+
+    return daily_reading_bp

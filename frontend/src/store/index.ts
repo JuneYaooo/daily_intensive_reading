@@ -1,20 +1,41 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Brief, Source, UserSettings } from '../types';
-import useSourceStore from './sourceStore';
-import usePromptStore from './promptStore';
-import useReportStore from './reportStore';
-import useCardStore from './cardStore';
-import { reportService, promptService, sourceService } from '../services';
+import { promptService, sourceService } from '../services';
 import dailyReadingService, { SummaryCard, FilteredUrl } from '../services/dailyReadingService';
 
-// Extend the Brief interface to include keyPoints and quotes if not already in types.ts
-interface ExtendedBrief extends Brief {
-  keyPoints?: string[];
-  quotes?: string[];
-  author?: string;
-  databaseId?: number;
+interface ApiConfig {
+  jigsawstackKeys: string;
+  modelBaseUrl: string;
+  modelName: string;
+  modelApiKey: string;
 }
+
+interface ErrorNotification {
+  message: string;
+  visible: boolean;
+}
+
+interface ApiErrorDetail {
+  phase?: string;
+  message?: string;
+  details?: unknown;
+}
+
+interface ApiErrorLike {
+  message?: string;
+  response?: {
+    data?: {
+      errors?: ApiErrorDetail[];
+    };
+  };
+}
+
+const formatErrorDetail = (error: ApiErrorDetail): string => {
+  if (typeof error.details === 'string') return error.details;
+  if (error.details) return JSON.stringify(error.details);
+  return error.message || '未知错误';
+};
 
 interface AppState {
   sources: Source[];
@@ -30,6 +51,8 @@ interface AppState {
   isLoadingSources: boolean;
   filteredUrls: FilteredUrl[];
   summaryCards: SummaryCard[];
+  apiConfig: ApiConfig;
+  errorNotification: ErrorNotification;
   
   fetchSources: () => Promise<void>;
   addSource: (source: Omit<Source, 'id'>) => Promise<void>;
@@ -42,13 +65,23 @@ interface AppState {
   setCustomFilterPrompt: (prompt: string) => void;
   setCustomSummaryPrompt: (prompt: string) => void;
   generateBriefs: () => Promise<void>;
-  resetCustomPrompts: () => void;
   selectBrief: (briefId: string) => void;
   toggleFavorite: (briefId: string) => void;
   getFavorites: () => Brief[];
   setShowPromptDialog: (show: boolean) => void;
   updateBrief: (briefId: string, updates: Partial<Brief>) => void;
+  setApiConfig: (config: Partial<ApiConfig>) => void;
+  clearApiConfig: () => void;
+  showError: (message: string) => void;
+  dismissError: () => void;
 }
+
+const DEFAULT_API_CONFIG: ApiConfig = {
+  jigsawstackKeys: '',
+  modelBaseUrl: '',
+  modelName: '',
+  modelApiKey: '',
+};
 
 // Fallback default prompts when database is empty
 const DEFAULT_FILTER_PROMPT = "您的任务是从提供的源文本中找到最相关和最有价值的内容URL链接。\n这些链接应该指向有深度、信息丰富且值得进一步阅读的文章或资源。\n请提取所有的URL链接，并根据内容的质量、相关性和信息价值对它们进行排名。\n对于每个URL，给出一个简短的标题和一个1-10的相关性评分。";
@@ -58,7 +91,7 @@ export const useAppStore = create<AppState>()(
   persist(
     (set, get) => {
       // Immediately create a store instance
-      const store = {
+      const store: AppState = {
         sources: [],
         briefs: [],
         selectedSourceIds: [],
@@ -75,6 +108,15 @@ export const useAppStore = create<AppState>()(
         isLoadingSources: false,
         filteredUrls: [],
         summaryCards: [],
+        apiConfig: (() => {
+          try {
+            const saved = sessionStorage.getItem('apiConfig');
+            return saved ? JSON.parse(saved) : { ...DEFAULT_API_CONFIG };
+          } catch {
+            return { ...DEFAULT_API_CONFIG };
+          }
+        })(),
+        errorNotification: { message: '', visible: false },
         
         fetchSources: async () => {
           set({ isLoadingSources: true });
@@ -145,8 +187,6 @@ export const useAppStore = create<AppState>()(
         loadDefaultSettings: async () => {
           try {
             // Try to get default prompts
-            const promptStore = usePromptStore.getState();
-            
             // First check if any prompts exist
             const allPrompts = await promptService.getAllPrompts();
             
@@ -168,7 +208,7 @@ export const useAppStore = create<AppState>()(
                 }));
                 console.log('Loaded default filter prompt:', filterPrompt.content);
               }
-            } catch (error) {
+            } catch {
               console.log('No default filter prompt found');
             }
             
@@ -183,7 +223,7 @@ export const useAppStore = create<AppState>()(
                 }));
                 console.log('Loaded default summary prompt:', summaryPrompt.content);
               }
-            } catch (error) {
+            } catch {
               console.log('No default summary prompt found');
             }
           } catch (error) {
@@ -236,8 +276,12 @@ export const useAppStore = create<AppState>()(
               summaryPrompt
             });
             
-            // 获取选中来源的URLs
-            const sourceUrls = selectedSources.map(source => source.url || '').filter(url => url !== '');
+            // 获取选中来源的URLs，默认只取前3个，避免浪费爬虫额度
+            const MAX_SOURCE_URLS = 3;
+            const sourceUrls = selectedSources
+              .map(source => source.url || '')
+              .filter(url => url !== '')
+              .slice(0, MAX_SOURCE_URLS);
             
             if (sourceUrls.length === 0) {
               console.error('没有有效的来源URL');
@@ -247,11 +291,23 @@ export const useAppStore = create<AppState>()(
 
             // 生成每日阅读内容
             set({ generatingStatus: '正在爬取源页面内容...' });
+            const apiConfig = get().apiConfig;
             const dailyReadingResponse = await dailyReadingService.generateDailyReading(
               sourceUrls,
               filterPrompt,
-              summaryPrompt
+              summaryPrompt,
+              undefined,
+              apiConfig
             );
+
+            // Check for scraper errors and show notification
+            const scraperErrors = dailyReadingResponse.errors?.filter(
+              (e) => e.phase === 'url_crawl' || e.phase === 'initial_crawl' || e.phase === 'content_collection'
+            ) || [];
+            if (scraperErrors.length > 0) {
+              const errorMsg = scraperErrors.map(formatErrorDetail).join('\n');
+              get().showError(`爬取失败: ${errorMsg}`);
+            }
 
             // 检查响应结构是否按预期
             if (!dailyReadingResponse.filtered_urls || !Array.isArray(dailyReadingResponse.filtered_urls)) {
@@ -276,7 +332,7 @@ export const useAppStore = create<AppState>()(
             // Create Brief objects from the summary cards
             try {
               const cardsAsBriefs = dailyReadingResponse.summary_cards.map(card => {
-                let content = card.conclusion || '';
+                const content = card.conclusion || '';
                 return {
                   id: `brief-card-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
                   sourceId: 'generated',
@@ -318,16 +374,19 @@ export const useAppStore = create<AppState>()(
               console.error('处理API响应数据时出错:', processError);
               set({ isGenerating: false, generatingStatus: '' });
             }
-          } catch (error) {
+          } catch (error: unknown) {
             console.error("Error generating briefs:", error);
+            // Show error notification for API failures
+            const errData = (error as ApiErrorLike).response?.data;
+            if (errData?.errors?.length) {
+              const errorMsg = errData.errors.map(formatErrorDetail).join('\n');
+              get().showError(`生成失败: ${errorMsg}`);
+            } else {
+              get().showError(`生成失败: ${(error as ApiErrorLike).message || '未知错误'}`);
+            }
             set({ isGenerating: false, generatingStatus: '' });
           }
         },
-        
-        resetCustomPrompts: () => set({ 
-          customFilterPrompt: "",
-          customSummaryPrompt: ""
-        }),
         
         selectBrief: (briefId) => {
           const state = get();
@@ -431,13 +490,42 @@ export const useAppStore = create<AppState>()(
         updateBrief: (briefId: string, updates: Partial<Brief>) => {
           console.log('更新Brief:', briefId, updates);
           set((state) => ({
-            briefs: state.briefs.map(brief => 
+            briefs: state.briefs.map(brief =>
               brief.id === briefId ? { ...brief, ...updates } : brief
             ),
             currentBriefs: state.currentBriefs.map(brief =>
               brief.id === briefId ? { ...brief, ...updates } : brief
             )
           }));
+        },
+
+        setApiConfig: (config: Partial<ApiConfig>) => {
+          set((state) => {
+            const newConfig = { ...state.apiConfig, ...config };
+            try {
+              sessionStorage.setItem('apiConfig', JSON.stringify(newConfig));
+            } catch {
+              // sessionStorage can be unavailable in restricted browser contexts.
+            }
+            return { apiConfig: newConfig };
+          });
+        },
+
+        clearApiConfig: () => {
+          try {
+            sessionStorage.removeItem('apiConfig');
+          } catch {
+            // sessionStorage can be unavailable in restricted browser contexts.
+          }
+          set({ apiConfig: { ...DEFAULT_API_CONFIG } });
+        },
+
+        showError: (message: string) => {
+          set({ errorNotification: { message, visible: true } });
+        },
+
+        dismissError: () => {
+          set({ errorNotification: { message: '', visible: false } });
         }
       };
       

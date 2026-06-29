@@ -10,7 +10,7 @@ interface ReportState {
   clearReport: () => void;
 }
 
-const useReportStore = create<ReportState>((set, get) => ({
+const useReportStore = create<ReportState>((set) => ({
   generatedReport: null,
   isLoading: false,
   error: null,
@@ -22,9 +22,9 @@ const useReportStore = create<ReportState>((set, get) => ({
       set({ generatedReport: report, isLoading: false });
       return report;
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to generate report' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to generate report'
       });
       return null;
     }
@@ -35,4 +35,4 @@ const useReportStore = create<ReportState>((set, get) => ({
   }
 }));
 
-export default useReportStore; 
+export default useReportStore;

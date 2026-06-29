@@ -46,8 +46,9 @@ echo "[entrypoint] Running database migrations..."
 alembic upgrade head
 
 echo "[entrypoint] Starting gunicorn..."
-exec gunicorn -w 1 \
-  --timeout 3600 \
+exec gunicorn -w 2 \
+  -k gevent \
+  --timeout 600 \
   --graceful-timeout 30 \
   --keep-alive 5 \
   --log-level info \

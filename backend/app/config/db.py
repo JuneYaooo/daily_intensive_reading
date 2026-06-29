@@ -16,7 +16,7 @@ DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,          # 使用前检测连接是否有效,自动重连
-    pool_recycle=3600,           # 1小时后回收连接,避免MySQL wait_timeout
+    pool_recycle=300,            # 5分钟回收连接,避免MySQL server has gone away
     pool_size=5,                 # 连接池大小
     max_overflow=10,             # 最大溢出连接数
     echo=False,                  # 不打印SQL日志

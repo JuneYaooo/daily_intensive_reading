@@ -28,7 +28,7 @@ interface CardState {
   }) => Promise<void>;
 }
 
-const useCardStore = create<CardState>((set, get) => ({
+const useCardStore = create<CardState>((set) => ({
   cards: [],
   currentCard: null,
   isLoading: false,
@@ -40,9 +40,9 @@ const useCardStore = create<CardState>((set, get) => ({
       const cards = await cardService.getAllCards();
       set({ cards, isLoading: false });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch cards' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch cards'
       });
     }
   },
@@ -53,9 +53,9 @@ const useCardStore = create<CardState>((set, get) => ({
       const card = await cardService.getCardById(id);
       set({ currentCard: card, isLoading: false });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch card' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch card'
       });
     }
   },
@@ -65,17 +65,17 @@ const useCardStore = create<CardState>((set, get) => ({
     try {
       const newCard = await cardService.createCard(data);
       if (newCard) {
-        set(state => ({ 
+        set(state => ({
           cards: [...state.cards, newCard],
           currentCard: newCard,
-          isLoading: false 
+          isLoading: false
         }));
       }
       return newCard;
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to create card' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to create card'
       });
       return null;
     }
@@ -86,16 +86,16 @@ const useCardStore = create<CardState>((set, get) => ({
     try {
       const success = await cardService.deleteCard(id);
       if (success) {
-        set(state => ({ 
+        set(state => ({
           cards: state.cards.filter(card => card.id !== id),
           currentCard: state.currentCard?.id === id ? null : state.currentCard,
-          isLoading: false 
+          isLoading: false
         }));
       }
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to delete card' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to delete card'
       });
     }
   },
@@ -105,21 +105,21 @@ const useCardStore = create<CardState>((set, get) => ({
     try {
       const updatedCard = await cardService.updateCard(id, data);
       if (updatedCard) {
-        set(state => ({ 
-          cards: state.cards.map(card => 
+        set(state => ({
+          cards: state.cards.map(card =>
             card.id === id ? updatedCard : card
           ),
           currentCard: state.currentCard?.id === id ? updatedCard : state.currentCard,
-          isLoading: false 
+          isLoading: false
         }));
       }
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to update card' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to update card'
       });
     }
   }
 }));
 
-export default useCardStore; 
+export default useCardStore;

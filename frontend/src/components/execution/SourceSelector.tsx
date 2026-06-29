@@ -1,7 +1,6 @@
 import React from 'react';
 import { Check, Info } from 'lucide-react';
 import { Source } from '../../types';
-import { useAppStore } from '../../store';
 
 interface SourceSelectorProps {
   sources: Source[];

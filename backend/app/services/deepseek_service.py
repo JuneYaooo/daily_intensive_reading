@@ -186,33 +186,43 @@ def truncate_content(text, max_tokens=MAX_CONTEXT_TOKENS-TOKENS_RESERVE, reducti
     
     return truncated_text
 
-def generate_completion(prompt, content, temperature=0.7, max_tokens=4000, max_retries=5):
+def generate_completion(prompt, content, temperature=0.7, max_tokens=4000, max_retries=5,
+                        model_base_url=None, model_name=None, model_api_key=None):
     """
     Generate completion using DeepSeek API with OpenAI client format
-    
+
     Args:
         prompt (str): The prompt to use
         content (str): The content to analyze
         temperature (float): Controls randomness (0-1)
         max_tokens (int): Maximum number of tokens to generate
         max_retries (int): Maximum number of retries with progressive truncation
-        
+        model_base_url (str, optional): Override base URL
+        model_name (str, optional): Override model name
+        model_api_key (str, optional): Override API key
+
     Returns:
         str: The generated text
     """
+    # Use overrides or defaults
+    api_key = model_api_key or DEEPSEEK_API_KEY
+    base_url = model_base_url or DEEPSEEK_BASE_URL
+    model = model_name or DEEPSEEK_MODEL_NAME
+
     # Truncate content to avoid token limit issues
     truncated_content = truncate_content(content)
-    
+
     retries = 0
     while retries <= max_retries:
         try:
             client = OpenAI(
-                api_key=DEEPSEEK_API_KEY,
-                base_url=f"{DEEPSEEK_BASE_URL}"
+                api_key=api_key,
+                base_url=f"{base_url}",
+                timeout=60.0
             )
-            
+
             response = client.chat.completions.create(
-                model=DEEPSEEK_MODEL_NAME,
+                model=model,
                 messages=[
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": truncated_content}
@@ -224,25 +234,26 @@ def generate_completion(prompt, content, temperature=0.7, max_tokens=4000, max_r
             if hasattr(response, 'choices') and len(response.choices) > 0:
                 return response.choices[0].message.content
             else:
-                print(f"Unexpected DeepSeek response format: {response}")
+                logger.error(f"Unexpected DeepSeek response format: {response}")
                 return None
-                
+
         except Exception as e:
             error_message = str(e)
             # Check if the error is related to token limit
             if "maximum context length" in error_message and "tokens" in error_message and retries < max_retries:
-                print(f"Token limit exceeded (retry {retries+1}/{max_retries}). Further truncating content...")
+                logger.warning(f"Token limit exceeded (retry {retries+1}/{max_retries}). Further truncating content...")
                 # Further truncate the content by 10%
                 truncated_content = truncate_content(truncated_content, reduction_ratio=0.1)
                 retries += 1
             else:
-                print(f"Error generating DeepSeek completion: {e}")
+                logger.error(f"Error generating DeepSeek completion: {type(e).__name__}: {e}")
                 return None
-    
-    print(f"Failed to generate completion after {max_retries} truncation attempts")
+
+    logger.error(f"Failed to generate completion after {max_retries} truncation attempts")
     return None
 
-def filter_content_urls(content, filter_prompt=None, num_results=10):
+def filter_content_urls(content, filter_prompt=None, num_results=10,
+                        model_base_url=None, model_name=None, model_api_key=None):
     """
     Filter and rank URLs from content using DeepSeek
     
@@ -285,7 +296,8 @@ def filter_content_urls(content, filter_prompt=None, num_results=10):
         Rank the URLs from highest to lowest relevance.
         """
         
-        response = generate_completion(prompt, content, temperature=0.3)
+        response = generate_completion(prompt, content, temperature=0.3,
+                                       model_base_url=model_base_url, model_name=model_name, model_api_key=model_api_key)
         
         # Parse the JSON response
         import json
@@ -302,7 +314,8 @@ def filter_content_urls(content, filter_prompt=None, num_results=10):
         logger.error(f"Error filtering content URLs: {e}")
         return []
 
-def summarize_content(content, summary_prompt=None):
+def summarize_content(content, summary_prompt=None,
+                      model_base_url=None, model_name=None, model_api_key=None):
     """
     Summarize content into a card format using DeepSeek
     
@@ -323,20 +336,21 @@ def summarize_content(content, summary_prompt=None):
         1. A clear, descriptive title (max 10 words)
         2. The key insights or information from the content (max 5 bullet points)
         3. Any important quotes or examples (if relevant)
-        4. A brief conclusion or takeaway
-        
+        4. A brief conclusion or takeaway (200-500 words)
+
         Format your response as a JSON object with the following structure, reply in Chinese:
         {{
             "title": "Title of the card",
             "key_points": ["Point 1", "Point 2", "Point 3", "Point 4", "Point 5"],
             "quotes": ["Quote 1", "Quote 2"],
-            "conclusion": "conclusion, 200~500 words, if the content is not related to the summary_prompt, conclusion should be ''",
+            "conclusion": "A comprehensive conclusion summarizing the key findings and value of the content, 200-500 words",
             "source_url": "URL of the original article/paper"
         }}
 
-        Note: if the content is not related to the summary_prompt, conclusion should be ''.
+        Important: Always provide a meaningful conclusion. Even if the content seems limited or unclear, extract whatever useful information is available and summarize it to the best of your ability.
         """
-        response = generate_completion(prompt, content, temperature=0.5)
+        response = generate_completion(prompt, content, temperature=0.5,
+                                       model_base_url=model_base_url, model_name=model_name, model_api_key=model_api_key)
         
         # Parse the JSON response
         import json
@@ -358,7 +372,8 @@ def summarize_content(content, summary_prompt=None):
         logger.error(f"Error summarizing content: {e}")
         return None
 
-def generate_poster_content(summary_card, title=None, subtitle=None):
+def generate_poster_content(summary_card, title=None, subtitle=None,
+                            model_base_url=None, model_name=None, model_api_key=None):
     """
     Generate poster content from a single summary card using DeepSeek
     
@@ -479,7 +494,8 @@ def generate_poster_content(summary_card, title=None, subtitle=None):
         - 底部区域必须紧贴内容，不要留下方空白
         """
         
-        response = generate_completion(prompt, card_content, temperature=0.6)
+        response = generate_completion(prompt, card_content, temperature=0.6,
+                                       model_base_url=model_base_url, model_name=model_name, model_api_key=model_api_key)
         
         if not response:
             logger.error("Failed to generate poster content from DeepSeek")

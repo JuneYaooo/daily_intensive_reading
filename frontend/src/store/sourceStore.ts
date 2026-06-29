@@ -14,7 +14,7 @@ interface SourceState {
   deleteSource: (id: number) => Promise<void>;
 }
 
-const useSourceStore = create<SourceState>((set, get) => ({
+const useSourceStore = create<SourceState>((set) => ({
   sources: [],
   currentSource: null,
   isLoading: false,
@@ -26,9 +26,9 @@ const useSourceStore = create<SourceState>((set, get) => ({
       const sources = await sourceService.getAllSources();
       set({ sources, isLoading: false });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch sources' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch sources'
       });
     }
   },
@@ -39,9 +39,9 @@ const useSourceStore = create<SourceState>((set, get) => ({
       const source = await sourceService.getSourceById(id);
       set({ currentSource: source, isLoading: false });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch source' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch source'
       });
     }
   },
@@ -50,15 +50,15 @@ const useSourceStore = create<SourceState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const newSource = await sourceService.createSource(source);
-      set(state => ({ 
+      set(state => ({
         sources: [...state.sources, newSource],
         currentSource: newSource,
-        isLoading: false 
+        isLoading: false
       }));
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to create source' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to create source'
       });
     }
   },
@@ -67,15 +67,15 @@ const useSourceStore = create<SourceState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const updatedSource = await sourceService.updateSource(id, source);
-      set(state => ({ 
+      set(state => ({
         sources: state.sources.map(s => s.id === id ? updatedSource : s),
         currentSource: updatedSource,
-        isLoading: false 
+        isLoading: false
       }));
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to update source' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to update source'
       });
     }
   },
@@ -84,18 +84,18 @@ const useSourceStore = create<SourceState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await sourceService.deleteSource(id);
-      set(state => ({ 
+      set(state => ({
         sources: state.sources.filter(s => s.id !== id),
         currentSource: state.currentSource?.id === id ? null : state.currentSource,
-        isLoading: false 
+        isLoading: false
       }));
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to delete source' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to delete source'
       });
     }
   }
 }));
 
-export default useSourceStore; 
+export default useSourceStore;

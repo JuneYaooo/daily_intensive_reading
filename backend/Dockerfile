@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 ENV PIP_DEFAULT_TIMEOUT=120
-RUN pip install --no-cache-dir --retries 10 --timeout 120 --prefer-binary -r requirements.txt cryptography
+RUN pip install --no-cache-dir --retries 10 --timeout 120 -i https://pypi.tuna.tsinghua.edu.cn/simple --prefer-binary -r requirements.txt
 
 COPY . .
 

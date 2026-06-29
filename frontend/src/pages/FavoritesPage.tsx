@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
 import useCardStore from '../store/cardStore';
 import BriefCard from '../components/execution/BriefCard';
-import { Brief } from '../types';
+import { Brief, ReadingCard } from '../types';
 
 const FavoritesPage: React.FC = () => {
   const { getFavorites, briefs } = useAppStore();
@@ -51,7 +51,7 @@ const FavoritesPage: React.FC = () => {
   }));
   
   // Format card content for display
-  function formatCardContent(card: any): string {
+  function formatCardContent(card: ReadingCard): string {
     // Only include the conclusion, no key points or quotes
     return card.conclusion || '';
   }

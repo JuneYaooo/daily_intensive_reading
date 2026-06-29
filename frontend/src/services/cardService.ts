@@ -16,7 +16,7 @@ const cardService = {
       return [];
     }
   },
-  
+
   /**
    * Get card by ID
    */
@@ -29,7 +29,7 @@ const cardService = {
       return null;
     }
   },
-  
+
   /**
    * Create a new favorite card
    */
@@ -49,7 +49,7 @@ const cardService = {
       return null;
     }
   },
-  
+
   /**
    * Delete a card (unfavorite)
    */
@@ -62,7 +62,7 @@ const cardService = {
       return false;
     }
   },
-  
+
   /**
    * Update a card
    */
@@ -82,38 +82,6 @@ const cardService = {
       return null;
     }
   },
-
-  /**
-   * Favorite a card (creates a new card if it doesn't exist)
-   */
-  async favoriteCard(id: number, userId: number): Promise<ReadingCard | null> {
-    try {
-      // If the brief doesn't have an ID in the database yet,
-      // we need to create a new favorite card
-      const data = {
-        title: `Favorited Item ${id}`,
-        source_url: `https://source-url.com/${id}`
-      };
-      const response = await api.post(`${BASE_URL}/create`, data);
-      return response.data;
-    } catch (error) {
-      console.error(`Error favoriting card ${id}:`, error);
-      return null;
-    }
-  },
-
-  /**
-   * Unfavorite a card (deletes the card from favorites)
-   */
-  async unfavoriteCard(id: number, userId: number): Promise<boolean> {
-    try {
-      await api.delete(`${BASE_URL}/${id}`);
-      return true;
-    } catch (error) {
-      console.error(`Error unfavoriting card ${id}:`, error);
-      return false;
-    }
-  }
 };
 
-export default cardService; 
+export default cardService;

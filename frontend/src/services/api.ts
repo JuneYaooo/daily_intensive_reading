@@ -1,8 +1,13 @@
 import axios from 'axios';
 
+const configuredApiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '') || '';
+const apiBaseUrl = configuredApiUrl.endsWith('/api')
+  ? configuredApiUrl.slice(0, -4)
+  : configuredApiUrl;
+
 // Create axios instance with default config
 const api = axios.create({
-  baseURL: '', // 使用相对路径，让Vite代理处理
+  baseURL: apiBaseUrl,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -19,7 +24,7 @@ api.interceptors.request.use(
   (config) => {
     // Log request
     console.log(`发起请求: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
-    
+
     // Add auth token if needed
     const token = localStorage.getItem('token');
     if (token) {
@@ -37,20 +42,20 @@ api.interceptors.response.use(
     // Handle common errors
     if (error.response) {
       const { status, data } = error.response;
-      
+
       console.error(`API错误 (${status}):`, data);
-      
+
       if (status === 401) {
         // Handle unauthorized
         console.error('未授权访问');
         // Redirect to login or show notification
       }
-      
+
       if (status === 404) {
         console.error('资源未找到:', data);
         // Let the 404 propagate to show our prompt dialog
       }
-      
+
       if (status === 500) {
         console.error('服务器错误:', data);
       }
@@ -65,4 +70,4 @@ api.interceptors.response.use(
   }
 );
 
-export default api; 
+export default api;

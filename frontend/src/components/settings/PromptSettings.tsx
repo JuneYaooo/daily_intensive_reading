@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Save, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { promptService } from '../../services';
-import { Prompt } from '../../types';
 
 const PromptSettings: React.FC = () => {
   const { settings, updateSettings } = useAppStore();

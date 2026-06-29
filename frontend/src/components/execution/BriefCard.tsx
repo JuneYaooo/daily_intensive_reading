@@ -12,6 +12,35 @@ interface BriefCardProps {
   showFavoritedAt?: boolean;
 }
 
+interface ApiErrorItem {
+  details?: unknown;
+  message?: string;
+}
+
+interface ApiErrorLike {
+  message?: string;
+  response?: {
+    data?: {
+      errors?: ApiErrorItem[];
+    };
+  };
+}
+
+const getErrorMessage = (error: unknown): string => {
+  const apiError = error as ApiErrorLike;
+  const errors = apiError.response?.data?.errors;
+  if (errors && errors.length > 0) {
+    return errors
+      .map((item) => {
+        if (typeof item.details === 'string') return item.details;
+        if (item.details) return JSON.stringify(item.details);
+        return item.message || '未知错误';
+      })
+      .join('; ');
+  }
+  return apiError.message || '未知错误';
+};
+
 const BriefCard: React.FC<BriefCardProps> = ({ brief, showFavoritedAt = false }) => {
   const [copied, setCopied] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -112,11 +141,16 @@ const BriefCard: React.FC<BriefCardProps> = ({ brief, showFavoritedAt = false })
             });
             
             console.log('Card created in database - Favorited with ID:', newCard.id);
+          } else {
+            throw new Error('收藏保存失败');
           }
         } else {
           // Just toggled to unfavorite - delete the card from the backend
           if (brief.databaseId) {
-            await cardService.deleteCard(brief.databaseId);
+            const deleted = await cardService.deleteCard(brief.databaseId);
+            if (!deleted) {
+              throw new Error('收藏删除失败');
+            }
             
             // Force update on all briefs to ensure everything is in sync
             const appStore = useAppStore.getState();
@@ -176,8 +210,9 @@ const BriefCard: React.FC<BriefCardProps> = ({ brief, showFavoritedAt = false })
       // 调用新的API生成单个卡片
       const result = await dailyReadingService.generateOneCard(
         brief.sourceUrl,
-        brief.sourceName || '', 
-        summaryPrompt
+        brief.sourceName || '',
+        summaryPrompt,
+        appStore.apiConfig
       );
       
       console.log('单卡生成结果:', result);
@@ -207,9 +242,10 @@ const BriefCard: React.FC<BriefCardProps> = ({ brief, showFavoritedAt = false })
         console.error('卡片生成失败或没有返回结果');
         alert('摘要生成失败，请稍后重试');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('生成卡片时出错:', error);
-      alert('摘要生成失败，请稍后重试');
+      const appStore = useAppStore.getState();
+      appStore.showError(`摘要生成失败: ${getErrorMessage(error)}`);
     } finally {
       setIsGenerating(false);
     }
@@ -226,10 +262,12 @@ const BriefCard: React.FC<BriefCardProps> = ({ brief, showFavoritedAt = false })
     try {
       console.log('开始为论文生成海报:', brief.sourceName, 'URL:', brief.sourceUrl);
       
+      const appStore = useAppStore.getState();
       const response = await dailyReadingService.generatePoster(
         brief.sourceUrl,
         brief.sourceName,
-        undefined // subtitle
+        undefined,
+        appStore.apiConfig
       );
       setPosterData(response);
       
@@ -239,11 +277,12 @@ const BriefCard: React.FC<BriefCardProps> = ({ brief, showFavoritedAt = false })
       } else {
         console.error('论文海报生成失败:', response.errors);
         // Show error message to user
-        alert(`海报生成失败: ${response.errors?.[0]?.message || '未知错误'}`);
+        appStore.showError(`海报生成失败: ${response.errors?.[0]?.message || '未知错误'}`);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('生成海报时出错:', error);
-      alert('生成海报时出错，请稍后重试');
+      const store = useAppStore.getState();
+      store.showError(`海报生成失败: ${getErrorMessage(error)}`);
     } finally {
       setIsGeneratingPoster(false);
     }
@@ -266,7 +305,7 @@ const BriefCard: React.FC<BriefCardProps> = ({ brief, showFavoritedAt = false })
         return <div className="text-gray-500">暂无内容</div>;
       }
       
-      let displayContent = content;
+      const displayContent = content;
       
       // Don't add URL to displayed content - we'll only add it when copying
       console.log('渲染内容:', displayContent.substring(0, 50) + '...');

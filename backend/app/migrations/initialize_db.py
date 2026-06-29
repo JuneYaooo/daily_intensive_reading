@@ -1,5 +1,5 @@
-from config.db import Base, engine
-from models.models import Source, Prompt, FavoriteCard
+from app.config.db import Base, engine
+from app.models.models import Source, Prompt, FavoriteCard
 
 def initialize_database():
     """
@@ -10,4 +10,4 @@ def initialize_database():
     print("Database tables created successfully.")
 
 if __name__ == "__main__":
-    initialize_database() 
+    initialize_database()

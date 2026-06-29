@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Play, Loader } from 'lucide-react';
 import { useAppStore } from '../store';
 import SourceSelector from '../components/execution/SourceSelector';
@@ -16,7 +16,6 @@ const CurationPage: React.FC = () => {
     customSummaryPrompt,
     setCustomFilterPrompt,
     setCustomSummaryPrompt,
-    resetCustomPrompts,
     generateBriefs,
     currentBriefs,
     briefs,
@@ -34,16 +33,16 @@ const CurationPage: React.FC = () => {
     console.log('当前设置:', settings);
     console.log('当前自定义过滤提示:', customFilterPrompt);
     console.log('当前自定义总结提示:', customSummaryPrompt);
-  }, [fetchSources, settings]);
+  }, [fetchSources, settings, customFilterPrompt, customSummaryPrompt]);
   
   const handleResetFilterPrompt = () => {
     console.log('重置过滤提示');
-    resetCustomPrompts(); // 重置所有自定义提示
+    setCustomFilterPrompt(settings.filterPrompt || '');
   };
   
   const handleResetSummaryPrompt = () => {
     console.log('重置总结提示');
-    resetCustomPrompts(); // 重置所有自定义提示
+    setCustomSummaryPrompt(settings.summaryPrompt || '');
   };
   
   const handleExecute = () => {

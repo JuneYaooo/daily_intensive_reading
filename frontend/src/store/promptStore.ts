@@ -14,7 +14,7 @@ interface PromptState {
   deletePrompt: (id: number) => Promise<void>;
 }
 
-const usePromptStore = create<PromptState>((set, get) => ({
+const usePromptStore = create<PromptState>((set) => ({
   prompts: [],
   currentPrompt: null,
   isLoading: false,
@@ -26,9 +26,9 @@ const usePromptStore = create<PromptState>((set, get) => ({
       const prompts = await promptService.getAllPrompts();
       set({ prompts, isLoading: false });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch prompts' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch prompts'
       });
     }
   },
@@ -39,9 +39,9 @@ const usePromptStore = create<PromptState>((set, get) => ({
       const prompt = await promptService.getPromptById(id);
       set({ currentPrompt: prompt, isLoading: false });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch prompt' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch prompt'
       });
     }
   },
@@ -50,15 +50,15 @@ const usePromptStore = create<PromptState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const newPrompt = await promptService.createPrompt(prompt);
-      set(state => ({ 
+      set(state => ({
         prompts: [...state.prompts, newPrompt],
         currentPrompt: newPrompt,
-        isLoading: false 
+        isLoading: false
       }));
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to create prompt' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to create prompt'
       });
     }
   },
@@ -66,7 +66,7 @@ const usePromptStore = create<PromptState>((set, get) => ({
   updatePrompt: async (id: number, prompt: Prompt) => {
     set({ isLoading: true, error: null });
     console.log('Updating prompt in store:', id, prompt);
-    
+
     // Validate prompt has required fields
     if (!prompt.name || !prompt.content) {
       console.error('Missing required fields for prompt update:', prompt);
@@ -76,20 +76,20 @@ const usePromptStore = create<PromptState>((set, get) => ({
       });
       return;
     }
-    
+
     try {
       const updatedPrompt = await promptService.updatePrompt(id, prompt);
       console.log('Prompt updated successfully:', updatedPrompt);
-      set(state => ({ 
+      set(state => ({
         prompts: state.prompts.map(p => p.id === id ? updatedPrompt : p),
         currentPrompt: updatedPrompt,
-        isLoading: false 
+        isLoading: false
       }));
     } catch (error) {
       console.error('Error updating prompt:', error);
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to update prompt' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to update prompt'
       });
     }
   },
@@ -98,18 +98,18 @@ const usePromptStore = create<PromptState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await promptService.deletePrompt(id);
-      set(state => ({ 
+      set(state => ({
         prompts: state.prompts.filter(p => p.id !== id),
         currentPrompt: state.currentPrompt?.id === id ? null : state.currentPrompt,
-        isLoading: false 
+        isLoading: false
       }));
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to delete prompt' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to delete prompt'
       });
     }
   }
 }));
 
-export default usePromptStore; 
+export default usePromptStore;

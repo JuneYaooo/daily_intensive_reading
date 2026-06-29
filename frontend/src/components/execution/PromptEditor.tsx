@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
-import { useAppStore } from '../../store';
 
 interface PromptEditorProps {
   type: 'filter' | 'summary';

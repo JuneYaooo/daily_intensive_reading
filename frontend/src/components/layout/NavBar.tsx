@@ -36,7 +36,7 @@ const NavBar: React.FC = () => {
             
             <NavLink to="/settings" active={isActive('/settings')}>
               <Settings className="w-5 h-5 mr-1" />
-              <span>提示词预设</span>
+              <span>设置</span>
             </NavLink>
           </div>
           
@@ -92,7 +92,7 @@ const MobileMenu: React.FC = () => {
             <MobileNavLink to="/" label="精选内容" icon={<FilterIcon className="w-5 h-5 mr-2" />} />
             <MobileNavLink to="/favorites" label="收藏夹" icon={<Heart className="w-5 h-5 mr-2" />} />
             <MobileNavLink to="/sources" label="信息源" icon={<Edit3 className="w-5 h-5 mr-2" />} />
-            <MobileNavLink to="/settings" label="提示词预设" icon={<Settings className="w-5 h-5 mr-2" />} />
+            <MobileNavLink to="/settings" label="设置" icon={<Settings className="w-5 h-5 mr-2" />} />
           </div>
         </div>
       )}

@@ -17,8 +17,8 @@ const SourceForm: React.FC<SourceFormProps> = ({ source, onSubmit, onCancel }) =
   useEffect(() => {
     if (source) {
       setName(source.name);
-      setUrl(source.url);
-      setDescription(source.description);
+      setUrl(source.url || '');
+      setDescription(source.description || '');
     }
   }, [source]);
   
@@ -38,7 +38,7 @@ const SourceForm: React.FC<SourceFormProps> = ({ source, onSubmit, onCancel }) =
     // Basic URL validation
     try {
       new URL(url);
-    } catch (_) {
+    } catch {
       setError('Please enter a valid URL');
       return;
     }
