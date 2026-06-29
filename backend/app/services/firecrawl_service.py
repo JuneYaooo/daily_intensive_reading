@@ -29,8 +29,8 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
-# Content cache TTL (24 hours)
-CONTENT_CACHE_TTL = 24 * 60 * 60
+# Content cache TTL (14 days)
+CONTENT_CACHE_TTL = 14 * 24 * 60 * 60
 
 # Initialize Redis client
 try:

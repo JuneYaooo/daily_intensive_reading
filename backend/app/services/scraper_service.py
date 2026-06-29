@@ -35,8 +35,8 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
-# Content cache TTL (24 hours)
-CONTENT_CACHE_TTL = 24 * 60 * 60
+# Content cache TTL (14 days)
+CONTENT_CACHE_TTL = 14 * 24 * 60 * 60
 
 # JigsawStack quota failure cache TTL (1 hour) — avoids burning keys when project quota is exhausted
 QUOTA_FAILURE_CACHE_TTL = 60 * 60
@@ -874,7 +874,7 @@ def scrape_with_firecrawl(url: str) -> dict:
             }
         }
 
-def is_arxiv_html_error_page(content: str) -> bool:
+def is_arxiv_html_error_page(content: str, url: str = "") -> bool:
     """Check if scraped content is an arXiv HTML error page, not actual paper content."""
     if not content:
         return True
@@ -889,8 +889,8 @@ def is_arxiv_html_error_page(content: str) -> bool:
     for indicator in indicators:
         if indicator.lower() in content_lower:
             return True
-    # Also flag if content is suspiciously short for a paper (< 3000 chars)
-    if len(content) < 3000:
+    # arXiv HTML placeholders can be very short; do not apply this to other sites.
+    if arxiv_html_to_abs_url(url) and len(content) < 3000:
         return True
     return False
 
@@ -947,7 +947,7 @@ def scrape_single_url(url: str, use_cache: bool = True, override_keys: list = No
         cached_content = get_cached_content(url)
         if cached_content:
             # Check if cached content is an arXiv error page — if so, invalidate and re-scrape
-            if is_arxiv_html_error_page(cached_content):
+            if is_arxiv_html_error_page(cached_content, url):
                 logger.warning(f"缓存的arXiv内容为错误页 ({len(cached_content)} 字符), 清除缓存并重新爬取: {url}")
                 if redis_client:
                     try:
@@ -976,7 +976,7 @@ def scrape_single_url(url: str, use_cache: bool = True, override_keys: list = No
             return result
 
         content = result.get("content", "")
-        if not is_arxiv_html_error_page(content):
+        if not is_arxiv_html_error_page(content, original_url):
             return result
 
         abs_url = arxiv_html_to_abs_url(original_url)
@@ -1019,7 +1019,7 @@ def scrape_single_url(url: str, use_cache: bool = True, override_keys: list = No
     direct_result = scrape_with_requests(url)
     if direct_result.get("success"):
         direct_result = _check_result_and_fallback(direct_result, url)
-        if direct_result.get("success") and not is_arxiv_html_error_page(direct_result.get("content", "")):
+        if direct_result.get("success") and not is_arxiv_html_error_page(direct_result.get("content", ""), url):
             return {
                 "success": True,
                 "results": [direct_result]
@@ -1041,7 +1041,7 @@ def scrape_single_url(url: str, use_cache: bool = True, override_keys: list = No
 
         if jigsaw_result.get("success"):
             jigsaw_result = _check_result_and_fallback(jigsaw_result, url)
-            if jigsaw_result.get("success") and not is_arxiv_html_error_page(jigsaw_result.get("content", "")):
+            if jigsaw_result.get("success") and not is_arxiv_html_error_page(jigsaw_result.get("content", ""), url):
                 return {
                     "success": True,
                     "results": [jigsaw_result]

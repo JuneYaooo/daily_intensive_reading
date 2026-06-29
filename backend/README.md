@@ -135,7 +135,7 @@ The application now uses a hybrid web scraping approach with intelligent fallbac
 1. **Direct HTTP scraping** - Free first pass for static/SSR pages
 2. **JigsawStack** - AI-powered scraping when direct HTTP is insufficient
 3. **Firecrawl** - Optional fallback when `FIRECRAWL_API_TOKEN` is configured
-4. **Redis Cache** - 24-hour content caching to reduce API calls
+4. **Redis Cache** - 14-day content caching to reduce repeated crawling and API calls
 
 ### Configuration
 
@@ -160,7 +160,7 @@ REDIS_PASSWORD=
 - **Smart Content Extraction**: JigsawStack uses AI to identify and extract main content
 - **Multi-key Support**: Automatically rotates between multiple JigsawStack API keys
 - **Intelligent Fallback**: Falls back from direct HTTP to JigsawStack, and to Firecrawl when configured
-- **Caching**: Redis caching prevents redundant scraping of the same URLs
+- **Caching**: Redis caches successfully scraped URL content for 14 days to prevent redundant scraping
 - **Detailed Logging**: Comprehensive logs for monitoring and debugging
 
 ## Running the Application
