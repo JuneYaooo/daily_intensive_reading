@@ -16,6 +16,7 @@ backend/*.pyc
 # ── Docker / local secrets ────────────────────────────────────────────────
 .env
 .env.local
+.claude/
 
 # ── Byte-compiled / optimized / DLL files ─────────────────────────────────
 # Byte-compiled / optimized / DLL files

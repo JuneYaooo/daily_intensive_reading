@@ -10,10 +10,17 @@ import concurrent.futures
 from datetime import datetime
 from dotenv import load_dotenv
 from ..utils.logger import BeijingLogger
-import redis
 import hashlib
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from . import content_cache
+from .content_cache import (
+    CONTENT_CACHE_TTL,
+    cache_content,
+    delete_cached_content,
+    get_cached_content,
+    get_url_cache_key,
+)
 
 # Initialize logger
 logger = BeijingLogger().get_logger()
@@ -29,83 +36,26 @@ JIGSAWSTACK_KEYS_LIST = [key.strip() for key in JIGSAWSTACK_API_KEYS.split(",") 
 FIRECRAWL_API_TOKEN = os.getenv("FIRECRAWL_API_TOKEN", "").strip()
 FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v1"
 
-# Redis configuration
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_DB = int(os.getenv("REDIS_DB", "0"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
-
-# Content cache TTL (14 days)
-CONTENT_CACHE_TTL = 14 * 24 * 60 * 60
-
 # JigsawStack quota failure cache TTL (1 hour) — avoids burning keys when project quota is exhausted
 QUOTA_FAILURE_CACHE_TTL = 60 * 60
 # Per-key exhaustion TTL (7 days) — individual keys that returned quota errors
 KEY_EXHAUSTED_TTL = 7 * 24 * 60 * 60
 
-# Initialize Redis client
-try:
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD,
-        decode_responses=True
-    )
-    # Test connection
-    redis_client.ping()
-    logger.info("Redis connection established successfully")
-except Exception as e:
-    logger.error(f"Redis connection failed: {e}")
-    redis_client = None
-
-def get_url_cache_key(url: str) -> str:
-    """Generate cache key for URL content"""
-    return f"content:{hashlib.md5(url.encode()).hexdigest()}"
-
-def cache_content(url: str, content: str) -> None:
-    """Cache scraped content in Redis"""
-    if not redis_client:
-        return
-
-    try:
-        cache_key = get_url_cache_key(url)
-        redis_client.setex(cache_key, CONTENT_CACHE_TTL, content)
-        logger.info(f"Cached content for URL: {url[:100]}...")
-    except Exception as e:
-        logger.warning(f"Failed to cache content: {e}")
-
-def get_cached_content(url: str) -> str | None:
-    """Get cached content from Redis"""
-    if not redis_client:
-        return None
-
-    try:
-        cache_key = get_url_cache_key(url)
-        content = redis_client.get(cache_key)
-        if content:
-            logger.info(f"Retrieved cached content for URL: {url[:100]}...")
-            return content
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to get cached content: {e}")
-        return None
-
 def is_jigsawstack_quota_exhausted() -> bool:
     """Check if JigsawStack quota is known to be exhausted (cached flag)."""
-    if not redis_client:
+    if not content_cache.redis_client:
         return False
     try:
-        return redis_client.get("jigsawstack:quota_exhausted") is not None
+        return content_cache.redis_client.get("jigsawstack:quota_exhausted") is not None
     except Exception:
         return False
 
 def mark_jigsawstack_quota_exhausted() -> None:
     """Mark JigsawStack quota as exhausted for QUOTA_FAILURE_CACHE_TTL seconds."""
-    if not redis_client:
+    if not content_cache.redis_client:
         return
     try:
-        redis_client.setex("jigsawstack:quota_exhausted", QUOTA_FAILURE_CACHE_TTL, "1")
+        content_cache.redis_client.setex("jigsawstack:quota_exhausted", QUOTA_FAILURE_CACHE_TTL, "1")
         logger.info(f"JigsawStack quota marked exhausted, will skip for {QUOTA_FAILURE_CACHE_TTL}s")
     except Exception:
         pass
@@ -115,19 +65,19 @@ def _key_hash(api_key: str) -> str:
 
 def is_key_exhausted(api_key: str) -> bool:
     """Check if a specific JigsawStack key is marked as exhausted (7-day TTL)."""
-    if not redis_client or not api_key:
+    if not content_cache.redis_client or not api_key:
         return False
     try:
-        return redis_client.get(f"jigsawstack:key_exhausted:{_key_hash(api_key)}") is not None
+        return content_cache.redis_client.get(f"jigsawstack:key_exhausted:{_key_hash(api_key)}") is not None
     except Exception:
         return False
 
 def mark_key_exhausted(api_key: str, reason: str = "") -> None:
     """Mark a specific JigsawStack key as exhausted for KEY_EXHAUSTED_TTL (7 days)."""
-    if not redis_client or not api_key:
+    if not content_cache.redis_client or not api_key:
         return
     try:
-        redis_client.setex(
+        content_cache.redis_client.setex(
             f"jigsawstack:key_exhausted:{_key_hash(api_key)}",
             KEY_EXHAUSTED_TTL,
             json.dumps({"exhausted_at": datetime.utcnow().isoformat(), "reason": reason})
@@ -138,20 +88,20 @@ def mark_key_exhausted(api_key: str, reason: str = "") -> None:
 
 def clear_key_exhausted(api_key: str) -> None:
     """Manually clear exhaustion flag for a key."""
-    if not redis_client or not api_key:
+    if not content_cache.redis_client or not api_key:
         return
     try:
-        redis_client.delete(f"jigsawstack:key_exhausted:{_key_hash(api_key)}")
+        content_cache.redis_client.delete(f"jigsawstack:key_exhausted:{_key_hash(api_key)}")
         logger.info(f"Key {api_key[:10]}... exhaustion flag cleared")
     except Exception:
         pass
 
 def get_exhausted_keys_count() -> int:
     """Count how many keys are currently marked exhausted."""
-    if not redis_client:
+    if not content_cache.redis_client:
         return 0
     try:
-        return len(redis_client.keys("jigsawstack:key_exhausted:*") or [])
+        return len(content_cache.redis_client.keys("jigsawstack:key_exhausted:*") or [])
     except Exception:
         return 0
 
@@ -171,9 +121,9 @@ def start_usage_round() -> str:
     """Start a new usage tracking round. Returns round_id."""
     global _active_round_id
     _active_round_id = f"round:{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}:{uuid.uuid4().hex[:6]}"
-    if redis_client:
+    if content_cache.redis_client:
         try:
-            redis_client.setex(
+            content_cache.redis_client.setex(
                 f"{_ROUND_KEY_PREFIX}:{_active_round_id}",
                 _ROUND_TTL,
                 json.dumps({
@@ -234,14 +184,14 @@ def track_jigsawstack_usage(api_key: str, resp_headers: dict, success: bool, url
         f"URL={url[:80]} | log_id={log_id}"
     )
 
-    if not redis_client:
+    if not content_cache.redis_client:
         return quota_info
 
     # Persist per-key usage counters
     key_hash = hashlib.md5(api_key.encode()).hexdigest()[:12]
     try:
         usage_key = f"{_KEY_USAGE_PREFIX}:{key_hash}"
-        raw = redis_client.get(usage_key)
+        raw = content_cache.redis_client.get(usage_key)
         key_data = json.loads(raw) if raw else {}
         key_data["last_prefix"] = api_key[:10] + "..."
         key_data["total_requests"] = key_data.get("total_requests", 0) + 1
@@ -252,7 +202,7 @@ def track_jigsawstack_usage(api_key: str, resp_headers: dict, success: bool, url
         key_data["last_rate_limit_remaining"] = quota_info.get("rate_limit_remaining")
         key_data["last_rate_limit_limit"] = quota_info.get("rate_limit_limit")
         key_data["last_used_at"] = datetime.utcnow().isoformat()
-        redis_client.setex(usage_key, _QUOTA_TTL, json.dumps(key_data))
+        content_cache.redis_client.setex(usage_key, _QUOTA_TTL, json.dumps(key_data))
     except Exception as e:
         logger.warning(f"Failed to persist key usage: {e}")
 
@@ -260,7 +210,7 @@ def track_jigsawstack_usage(api_key: str, resp_headers: dict, success: bool, url
     round_id = _get_active_round_id()
     if round_id:
         try:
-            raw = redis_client.get(f"{_ROUND_KEY_PREFIX}:{round_id}")
+            raw = content_cache.redis_client.get(f"{_ROUND_KEY_PREFIX}:{round_id}")
             if raw:
                 round_data = json.loads(raw)
                 round_data["total_requests"] = round_data.get("total_requests", 0) + 1
@@ -270,13 +220,13 @@ def track_jigsawstack_usage(api_key: str, resp_headers: dict, success: bool, url
                     round_data["failed_requests"] = round_data.get("failed_requests", 0) + 1
                 if quota_info["key_prefix"] not in round_data.get("keys_used", []):
                     round_data.setdefault("keys_used", []).append(quota_info["key_prefix"])
-                redis_client.setex(f"{_ROUND_KEY_PREFIX}:{round_id}", _ROUND_TTL, json.dumps(round_data))
+                content_cache.redis_client.setex(f"{_ROUND_KEY_PREFIX}:{round_id}", _ROUND_TTL, json.dumps(round_data))
         except Exception:
             pass
 
     # Also persist latest quota snapshot for quick lookup
     try:
-        redis_client.setex(
+        content_cache.redis_client.setex(
             f"{_QUOTA_KEY_PREFIX}:latest",
             _QUOTA_TTL,
             json.dumps({
@@ -307,27 +257,27 @@ def get_jigsawstack_quota_status() -> dict:
         "active_rounds": [],
     }
 
-    if not redis_client:
+    if not content_cache.redis_client:
         return status
 
     try:
-        raw = redis_client.get(f"{_QUOTA_KEY_PREFIX}:latest")
+        raw = content_cache.redis_client.get(f"{_QUOTA_KEY_PREFIX}:latest")
         if raw:
             status["latest_quota"] = json.loads(raw)
     except Exception:
         pass
 
     try:
-        for key in redis_client.keys(f"{_KEY_USAGE_PREFIX}:*") or []:
-            raw = redis_client.get(key)
+        for key in content_cache.redis_client.keys(f"{_KEY_USAGE_PREFIX}:*") or []:
+            raw = content_cache.redis_client.get(key)
             if raw:
                 status["key_usages"].append(json.loads(raw))
     except Exception:
         pass
 
     try:
-        for key in redis_client.keys(f"{_ROUND_KEY_PREFIX}:round:*") or []:
-            raw = redis_client.get(key)
+        for key in content_cache.redis_client.keys(f"{_ROUND_KEY_PREFIX}:round:*") or []:
+            raw = content_cache.redis_client.get(key)
             if raw:
                 rd = json.loads(raw)
                 rd["round_id"] = key.split(":")[-1]
@@ -343,10 +293,10 @@ def get_jigsawstack_quota_status() -> dict:
 def get_round_summary(round_id: str = None) -> dict | None:
     """Get summary for a specific round or the active round."""
     rid = round_id or _get_active_round_id()
-    if not rid or not redis_client:
+    if not rid or not content_cache.redis_client:
         return None
     try:
-        raw = redis_client.get(f"{_ROUND_KEY_PREFIX}:{rid}")
+        raw = content_cache.redis_client.get(f"{_ROUND_KEY_PREFIX}:{rid}")
         return json.loads(raw) if raw else None
     except Exception:
         return None
@@ -949,11 +899,7 @@ def scrape_single_url(url: str, use_cache: bool = True, override_keys: list = No
             # Check if cached content is an arXiv error page — if so, invalidate and re-scrape
             if is_arxiv_html_error_page(cached_content, url):
                 logger.warning(f"缓存的arXiv内容为错误页 ({len(cached_content)} 字符), 清除缓存并重新爬取: {url}")
-                if redis_client:
-                    try:
-                        redis_client.delete(get_url_cache_key(url))
-                    except Exception:
-                        pass
+                delete_cached_content(url)
                 # Fall through to re-scrape (don't return)
             else:
                 logger.info(f"从缓存获取内容: {url}")
@@ -991,11 +937,7 @@ def scrape_single_url(url: str, use_cache: bool = True, override_keys: list = No
         if abs_direct.get("success"):
             logger.info(f"arXiv摘要页回退成功 (直接HTTP): {abs_url}")
             # Invalidate the HTML URL cache so future requests won't serve the error page
-            if redis_client:
-                try:
-                    redis_client.delete(get_url_cache_key(original_url))
-                except Exception:
-                    pass
+            delete_cached_content(original_url)
             return abs_direct
 
         # JigsawStack
@@ -1004,11 +946,7 @@ def scrape_single_url(url: str, use_cache: bool = True, override_keys: list = No
             abs_jigsaw = scrape_with_jigsawstack(abs_url, use_element_prompts=True, override_keys=override_keys)
             if abs_jigsaw.get("success"):
                 logger.info(f"arXiv摘要页回退成功 (JigsawStack): {abs_url}")
-                if redis_client:
-                    try:
-                        redis_client.delete(get_url_cache_key(original_url))
-                    except Exception:
-                        pass
+                delete_cached_content(original_url)
                 return abs_jigsaw
 
         logger.warning(f"arXiv摘要页回退也失败: {abs_url}")

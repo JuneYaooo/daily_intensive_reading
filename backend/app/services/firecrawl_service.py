@@ -10,8 +10,12 @@ import signal
 from datetime import datetime
 from dotenv import load_dotenv
 from ..utils.logger import BeijingLogger
-import redis
-import hashlib
+from .content_cache import (
+    CONTENT_CACHE_TTL,
+    cache_content,
+    get_cached_content,
+    get_url_cache_key,
+)
 
 # Initialize logger
 logger = BeijingLogger().get_logger()
@@ -22,64 +26,6 @@ load_dotenv()
 # Firecrawl API configuration
 FIRECRAWL_API_TOKEN = os.getenv("FIRECRAWL_API_TOKEN", "").strip()
 FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v1"
-
-# Redis configuration
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_DB = int(os.getenv("REDIS_DB", "0"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
-
-# Content cache TTL (14 days)
-CONTENT_CACHE_TTL = 14 * 24 * 60 * 60
-
-# Initialize Redis client
-try:
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD,
-        decode_responses=True
-    )
-    # Test connection
-    redis_client.ping()
-    logger.info("Redis connection established successfully")
-except Exception as e:
-    logger.error(f"Redis connection failed: {e}")
-    redis_client = None
-
-def get_url_cache_key(url: str) -> str:
-    """Generate cache key for URL content"""
-    # Use MD5 hash of URL to create a clean cache key
-    return f"content:{hashlib.md5(url.encode()).hexdigest()}"
-
-def cache_content(url: str, content: str) -> None:
-    """Cache scraped content in Redis"""
-    if not redis_client:
-        return
-
-    try:
-        cache_key = get_url_cache_key(url)
-        redis_client.setex(cache_key, CONTENT_CACHE_TTL, content)
-        logger.info(f"Cached content for URL: {url[:100]}...")
-    except Exception as e:
-        logger.warning(f"Failed to cache content: {e}")
-
-def get_cached_content(url: str) -> str | None:
-    """Get cached content from Redis"""
-    if not redis_client:
-        return None
-
-    try:
-        cache_key = get_url_cache_key(url)
-        content = redis_client.get(cache_key)
-        if content:
-            logger.info(f"Retrieved cached content for URL: {url[:100]}...")
-            return content
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to get cached content: {e}")
-        return None
 
 # Default request timeout (in seconds)
 DEFAULT_REQUEST_TIMEOUT = 1200
