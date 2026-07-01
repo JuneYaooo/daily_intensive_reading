@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Play, Loader } from 'lucide-react';
+import { Play, Loader, Info } from 'lucide-react';
 import { useAppStore } from '../store';
 import SourceSelector from '../components/execution/SourceSelector';
 import PromptEditor from '../components/execution/PromptEditor';
@@ -59,6 +59,7 @@ const CurationPage: React.FC = () => {
   };
   
   const displayedBriefIds = currentBriefs.map(brief => brief.id);
+  const isSourceLimitExceeded = selectedSourceIds.length > 3;
   
   // 将当前简报分为两组：生成的卡片和URL-only
   const generatedBriefs = currentBriefs.filter(brief => brief.sourceId === 'generated');
@@ -77,6 +78,21 @@ const CurationPage: React.FC = () => {
             selectedSourceIds={selectedSourceIds}
             onToggleSource={toggleSourceSelection}
           />
+
+          <div
+            className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+              isSourceLimitExceeded
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-blue-100 bg-blue-50 text-blue-800'
+            }`}
+          >
+            <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <span>
+              {isSourceLimitExceeded
+                ? `已选 ${selectedSourceIds.length} 个，生成时最多提交前 3 个已选信息源，后面的不会在本轮提交。`
+                : '生成时最多提交前 3 个已选信息源，以节省爬虫额度。'}
+            </span>
+          </div>
           
           <PromptEditor
             type="filter"
